@@ -353,18 +353,26 @@ namespace JackFrostBot
             {
                 try
                 {
+                    //Create color role at highest possible position
+                    var lowestModeratorRole = Context.Guild.Roles.FirstOrDefault(x => !x.Permissions.Administrator).Position;
                     colorValue = colorValue.Replace("#", "");
                     Discord.Color roleColor = new Discord.Color(uint.Parse(colorValue, NumberStyles.HexNumber));
 
-                    await Context.Guild.CreateRoleAsync($"Color: {roleName}", null, roleColor);
+                    var colorRole = await Context.Guild.CreateRoleAsync($"Color: {roleName}", null, roleColor, false, null);
+                    await colorRole.ModifyAsync(r => r.Position = lowestModeratorRole - 1);
+
                     await Context.Channel.SendMessageAsync("Role successfully created!");
+
+                    //Sort color roles by hue as high as possible on list
+                    var orderedRoles = Context.Guild.Roles.Where(x => x.Name.StartsWith("Color: ")).OrderBy(x => System.Drawing.Color.FromArgb(x.Color.R, x.Color.R, x.Color.G, x.Color.B).GetHue());
+                    foreach (var role in orderedRoles)
+                        await role.ModifyAsync(x => x.Position = lowestModeratorRole - 1);
                 }
                 catch
                 {
                     await Context.Channel.SendMessageAsync("Role couldn't be created. Make sure you entered a valid hexadecimal value!");
                 }
             }
-
         }
 
         //Assign yourself a role with a specific color
@@ -377,19 +385,13 @@ namespace JackFrostBot
                 {
                     SocketGuildUser user = (SocketGuildUser)Context.User;
                     var clrRole = Context.Guild.Roles.FirstOrDefault(r => r.Name.Equals($"Color: {roleName}", StringComparison.CurrentCultureIgnoreCase));
-                    //Try to move color role to highest spot possible
-                    var lowestModeratorRole = UserSettings.Roles.ModeratorRoleIDs(Context.Guild.Id).Min(r => Context.Guild.GetRole(r).Position);
-                    await clrRole.ModifyAsync(x => x.Position = lowestModeratorRole - 1);
                     //Give role
                     await user.AddRoleAsync(clrRole);
                     await Context.Channel.SendMessageAsync("Role successfully added!");
+                    //Remove other color role user already has
                     foreach (var role in user.Roles)
-                    {
                         if (role.Name.ToUpper().Contains("COLOR: ") && !role.Name.ToUpper().Contains(roleName.ToUpper()))
-                        {
                             await user.RemoveRoleAsync(role);
-                        }
-                    }
                 }
                 catch
                 {
@@ -405,9 +407,7 @@ namespace JackFrostBot
         {
             if (Xml.CommandAllowed("show colors", Context))
             {
-                List<IRole> colorRoles = new List<IRole>();
-                foreach (var role in Context.Guild.Roles.Where(x => x.Name.StartsWith("Color: ")))
-                    colorRoles.Add(role);
+                List<IRole> colorRoles = Context.Guild.Roles.Where(x => x.Name.StartsWith("Color: ")).OrderBy(x => System.Drawing.Color.FromArgb(x.Color.R, x.Color.R, x.Color.G, x.Color.B).GetHue()).ToList();
 
                 Bitmap bitmap = new Bitmap(320, 15 * colorRoles.Count, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 using (Graphics graphics = Graphics.FromImage(bitmap))
@@ -445,8 +445,16 @@ namespace JackFrostBot
 
                     try
                     {
+                        //Sort color roles by hue
+                        var lowestModeratorRole = Context.Guild.Roles.FirstOrDefault(x => !x.Permissions.Administrator).Position;
                         await colorRole.ModifyAsync(r => r.Color = roleColor);
+                        await colorRole.ModifyAsync(r => r.Position = lowestModeratorRole - 1);
                         await Context.Channel.SendMessageAsync("Role successfully updated!");
+
+                        var orderedRoles = Context.Guild.Roles.Where(x => x.Name.StartsWith("Color: ")).OrderBy(x => System.Drawing.Color.FromArgb(x.Color.R, x.Color.R, x.Color.G, x.Color.B).GetHue());
+                        //Try to move color role to highest spot possible
+                        foreach (var role in orderedRoles)
+                            await role.ModifyAsync(x => x.Position = lowestModeratorRole - 1);
                     }
                     catch
                     {
@@ -560,24 +568,25 @@ namespace JackFrostBot
 
         //Saves message to a "pinned" message channel
         [Command("pin"), Summary("Saves message to a pinned message channel.")]
-        public async Task PinMessage([Remainder, Summary("The ID of the message to pin.")] string messageId)
+        public async Task PinMessage([Summary("The ID of the message to pin.")] string messageId, [Remainder, Summary("The ID of the channel the message is in.")] IMessageChannel channel)
         {
-            if (Xml.CommandAllowed("pin", Context))
+            List<ulong> allowedChannels = new List<ulong>() { 681270126657798295, 681273506964701222, 143149937247387649, 448202199852646431 };
+            if (Xml.CommandAllowed("pin", Context) && allowedChannels.Contains(channel.Id))
             {
-                var channel = (ITextChannel)Context.Channel;
+                if (channel == null)
+                    channel = (ITextChannel)Context.Channel;
                 var msg = await channel.GetMessageAsync(Convert.ToUInt64(messageId));
 
                 try
                 {
                     var pinChannel = await Context.Guild.GetTextChannelAsync(JackFrostBot.UserSettings.Channels.PinsChannelId(Context.Guild.Id));
 
-                    var embed = Embeds.Pin((IGuildChannel)Context.Channel, msg);
+                    var embed = Embeds.Pin((IGuildChannel)Context.Channel, msg, Context.Message.Author);
                     await pinChannel.SendMessageAsync("", embed: embed).ConfigureAwait(false);
                 }
                 catch
                 {
-                    await Context.Channel.SendMessageAsync("Could not find referenced message in this channel.");
-
+                    await Context.Channel.SendMessageAsync("Could not find referenced message in the specified channel.");
                 }
 
             }
@@ -710,6 +719,17 @@ namespace JackFrostBot
                     await Context.Channel.SendMessageAsync($"You don't have enough {UserSettings.BotOptions.GetString("CurrencyName", Context.Guild.Id)}!");
                 }
             }
+        }
+
+        //Manually check forum for new posts
+        [Command("update"), Summary("Update amicitia.github.io based on shrinefox.com/forum submissions.")]
+        public async Task ForumCheck()
+        {
+            if (Xml.CommandAllowed("update", Context))
+            {
+                await Webscraper.NewForumPostCheck((IGuildChannel)Context.Channel);
+            }
+            try { await Context.Channel.SendMessageAsync(""); } catch { }
         }
 
     }
